@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Cảnh Báo An Ninh Mạng</title>
+    <!-- Dùng Bootstrap để làm giao diện -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .kpi-card { text-align: center; padding: 20px; border-radius: 8px; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-bottom: 4px solid #ccc; }
+        .kpi-title { font-size: 1.1rem; color: #6c757d; font-weight: 600; }
+        .kpi-value { font-size: 2.5rem; font-weight: bold; margin-top: 10px; }
+        .card-header { background-color: white; font-weight: bold; border-bottom: 2px solid #eee; }
+        .table-hover tbody tr:hover { background-color: #f1f1f1; }
+        .CRITICAL { color: #dc3545; font-weight: bold; }
+        .HIGH { color: #fd7e14; font-weight: bold; }
+        .MEDIUM { color: #ffc107; font-weight: bold; }
+        .LOW { color: #0dcaf0; }
+    </style>
+</head>
+<body>
+
+<div class="container-fluid py-4">
+    <h2 class="mb-4 text-center">🛡️ HỆ THỐNG GIÁM SÁT VÀ CÁCH LY MÃ ĐỘC</h2>
+
+    <!-- Hàng 1: Các thẻ thống kê (KPI) -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="kpi-card" style="border-bottom-color: #0d6efd;">
+                <div class="kpi-title">Tổng Cảnh Báo</div>
+                <div class="kpi-value text-primary" id="totalAlerts">0</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-card" style="border-bottom-color: #dc3545;">
+                <div class="kpi-title">Mức Nghiêm Trọng</div>
+                <div class="kpi-value text-danger" id="criticalAlerts">0</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-card" style="border-bottom-color: #fd7e14;">
+                <div class="kpi-title">Mức Cao</div>
+                <div class="kpi-value text-warning" id="highAlerts">0</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="kpi-card" style="border-bottom-color: #198754;">
+                <div class="kpi-title">Đã Cách Ly</div>
+                <div class="kpi-value text-success" id="quarantinedAlerts">0</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hàng 2: Biểu đồ -->
+    <div class="row mb-4">
+        <div class="col-md-6">
+            <div class="card shadow-sm">
+                <div class="card-header">Biểu đồ Mức độ Cảnh báo</div>
+                <div class="card-body d-flex justify-content-center">
+                    <div style="width: 300px;">
+                        <canvas id="severityChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card shadow-sm">
+                <div class="card-header">Biểu đồ Cảnh báo theo Thời gian</div>
+                <div class="card-body">
+                    <canvas id="timelineChart" height="120"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hàng 3: Bảng dữ liệu -->
+    <div class="card shadow-sm">
+        <div class="card-header">Nhật ký Sự kiện Gần đây</div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Thời Gian</th>
+                        <th>Mức Độ</th>
+                        <th>Mô Tả</th>
+                        <th>IP Thiết Bị</th>
+                        <th>MAC Thiết Bị</th>
+                        <th>Trạng Thái</th>
+                    </tr>
+                </thead>
+                <tbody id="alertTable">
+                    <tr><td colspan="7" class="text-center py-3">Đang tải dữ liệu...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Thư viện Chart.js để vẽ biểu đồ -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Khởi tạo các biểu đồ rỗng trước
+    let chartSeverity, chartTimeline;
+
+    async function loadData() {
+        try {
+            const response = await fetch('/api/alerts');
+            const result = await response.json();
+            const data = result.data;
+
+            // 1. Cập nhật các thẻ KPI
+            document.getElementById('totalAlerts').innerText = data.length;
+            document.getElementById('criticalAlerts').innerText = data.filter(a => a.severity === 'CRITICAL').length;
+            document.getElementById('highAlerts').innerText = data.filter(a => a.severity === 'HIGH').length;
+            document.getElementById('quarantinedAlerts').innerText = data.filter(a => a.is_quarantined).length;
+
+            // 2. Vẽ bảng dữ liệu
+            const tbody = document.getElementById('alertTable');
+            tbody.innerHTML = ''; 
+
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Chưa có cảnh báo nào.</td></tr>';
+            } else {
+                data.forEach(alert => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${alert.id}</td>
+                        <td>${new Date(alert.timestamp).toLocaleString('vi-VN')}</td>
+                        <td class="${alert.severity}">${alert.severity}</td>
+                        <td>${alert.description}</td>
+                        <td>${alert.device_ip || 'N/A'}</td>
+                        <td>${alert.device_mac || 'N/A'}</td>
+                        <td>${alert.is_quarantined ? '<span class="badge bg-success">Đã cách ly</span>' : '<span class="badge bg-secondary">Chưa cách ly</span>'}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+
+            // 3. Cập nhật Biểu đồ tròn (Severity)
+            const severityCounts = {
+                'CRITICAL': data.filter(a => a.severity === 'CRITICAL').length,
+                'HIGH': data.filter(a => a.severity === 'HIGH').length,
+                'MEDIUM': data.filter(a => a.severity === 'MEDIUM').length,
+                'LOW': data.filter(a => a.severity === 'LOW').length
+            };
+
+            updateSeverityChart(severityCounts);
+
+        } catch (error) {
+            console.error("Lỗi khi tải dữ liệu:", error);
+        }
+    }
+
+    // Hàm vẽ biểu đồ tròn
+    function updateSeverityChart(counts) {
+        const ctx = document.getElementById('severityChart').getContext('2d');
+        
+        if (chartSeverity) chartSeverity.destroy(); // Xóa biểu đồ cũ nếu có
+
+        chartSeverity = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+                datasets: [{
+                    data: [counts.CRITICAL, counts.HIGH, counts.MEDIUM, counts.LOW],
+                    backgroundColor: ['#dc3545', '#fd7e14', '#ffc107', '#0dcaf0'],
+                    borderWidth: 1
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+
+    // Tự động tải lại dữ liệu mỗi 5 giây
+    loadData();
+    setInterval(loadData, 5000);
+</script>
+</body>
+</html>
