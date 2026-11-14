@@ -28,36 +28,62 @@ function authenticateAgent(req, res, next) {
 app.post('/api/wazuh-alert', authenticateAgent, async (req, res) => {
   try {
     const data = req.body;
-
-    // 1. ETL: Map rule.level -> severity
-    const level = data.rule?.level || 0;
     let severity = 'INFO';
-    if (level >= 12) severity = 'CRITICAL';
-    else if (level >= 10) severity = 'HIGH';
-    else if (level >= 7) severity = 'MEDIUM';
-    else if (level >= 4) severity = 'LOW';
+    if (data.severity && typeof data.severity === 'string') {
+      severity = data.severity.trim().toUpperCase();
+    } else {
+      const level = Number(data.rule?.level) || 0;
+      if (level >= 12) severity = 'CRITICAL';
+      else if (level >= 10) severity = 'HIGH';
+      else if (level >= 7) severity = 'MEDIUM';
+      else if (level >= 4) severity = 'LOW';
+    }
 
-    // 2. Extract device information
-    const deviceIp = data.agent?.ip || null;
-    const deviceMac = data.data?.win?.eventdata?.mac || data.data?.srcmac || null;
-    const description = data.rule?.description || 'Unknown alert';
+    // 2. Trích xuất thông tin thiết bị động từ nhiều định dạng payload của agent
+    const deviceIp = data.device_ip || data.ip || data.agent?.ip || data.data?.srcip || null;
+    const rawMac =
+      data.device_mac ||
+      data.mac ||
+      data.agent?.mac ||
+      data.data?.win?.eventdata?.mac ||
+      data.data?.srcmac ||
+      null;
+    const deviceMac = rawMac ? String(rawMac).trim() : null;
 
-    // 3. Save to the database
+    const alertType = data.alert_type || 'MALWARE';
+    const description = data.description || data.rule?.description || 'Unknown alert';
+
+    console.log(`📩 Received Alert | Severity: ${severity} | IP: ${deviceIp} | MAC: ${deviceMac}`);
+
+    // 3. Lưu cảnh báo vào database
     const result = await pool.query(
       `INSERT INTO alerts (severity, alert_type, description, device_ip, device_mac, raw_payload)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-      [severity, 'MALWARE', description, deviceIp, deviceMac, JSON.stringify(data)]
+      [severity, alertType, description, deviceIp, deviceMac, JSON.stringify(data)]
     );
     const alertId = result.rows[0].id;
 
-    // 4. If severity is CRITICAL and a MAC address is available, quarantine through ISE
-    if (severity === 'CRITICAL' && deviceMac) {
-      await quarantineDevice(deviceMac, alertId);
+    // 4. Kích hoạt cách ly qua Cisco ISE nếu severity từ MEDIUM trở lên (MEDIUM, HIGH, CRITICAL) và có MAC
+    const quarantineSeverities = ['MEDIUM', 'HIGH', 'CRITICAL'];
+    let quarantineTriggered = false;
+
+    if (quarantineSeverities.includes(severity)) {
+      if (deviceMac) {
+        await quarantineDevice(deviceMac, alertId);
+        quarantineTriggered = true;
+      } else {
+        console.warn(`⚠️ Alert [${alertId}] có mức độ ${severity} nhưng thiếu địa chỉ MAC nên bỏ qua bước cách ly ISE.`);
+      }
     }
 
-    res.json({ success: true, alertId });
+    res.json({
+      success: true,
+      alertId,
+      severity,
+      quarantineTriggered
+    });
   } catch (err) {
-    console.error(err);
+    console.error('❌ Error processing /api/wazuh-alert:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -65,21 +91,22 @@ app.post('/api/wazuh-alert', authenticateAgent, async (req, res) => {
 // Call the Cisco ISE ERS API to quarantine a device
 async function quarantineDevice(macAddress, alertId) {
   try {
-    const iseAgent = new https.Agent({ rejectUnauthorized: false }); 
+    const iseAgent = new https.Agent({ rejectUnauthorized: false });
+    const policyName = process.env.ISE_QUARANTINE_POLICY || 'Quarantine_Policy';
 
     await axios({
       method: 'PUT',
       url: `${process.env.ISE_BASE_URL}/ers/config/ancendpoint/apply`,
       data: {
-        "OperationAdditionalData": {
-          "additionalData": [
+        OperationAdditionalData: {
+          additionalData: [
             {
-              "name": "macAddress",
-              "value": macAddress
+              name: 'macAddress',
+              value: macAddress
             },
             {
-              "name": "policyName",
-              "value": "Quarantine_Policy" // Ensure this policy name exactly matches the one configured in ISE
+              name: 'policyName',
+              value: policyName
             }
           ]
         }
@@ -97,12 +124,11 @@ async function quarantineDevice(macAddress, alertId) {
 
     // Update the quarantine status in the database
     await pool.query('UPDATE alerts SET is_quarantined = TRUE WHERE id = $1', [alertId]);
-    console.log(`✅ Successfully sent the quarantine command for MAC [${macAddress}] to Cisco ISE.`);
+    console.log(`✅ Successfully sent the quarantine command for MAC [${macAddress}] (Policy: ${policyName}) to Cisco ISE.`);
   } catch (err) {
     console.error(`❌ Failed to call the ISE API to quarantine MAC [${macAddress}]:`);
     if (err.response) {
       console.error(`Status: ${err.response.status}`);
-      // Use JSON.stringify to print the full error instead of [Object]
       console.error(JSON.stringify(err.response.data, null, 2));
     } else {
       console.error(err.message);
@@ -161,31 +187,6 @@ app.get('/api/dashboard-summary', async (req, res) => {
   }
 });
 
-// Start the server
-// ============================================================================
-// TEST ENDPOINT: Test the ISE API when no agent is available
-// Open http://localhost:3000/api/test-ise in a browser
-// ============================================================================
-app.get('/api/test-ise', async (req, res) => {
-  // Create a mock MAC address in the expected format
-  const mockIp = '172.16.10.100';
-  const mockMac = '50:00:00:08:00:00'; 
-  const mockAlertId = 9999; // Mock alert ID
-
-  console.log(`[TEST] Sending a simulated quarantine command for IP: ${mockIp}, MAC: ${mockMac}`);
-  
-  try {
-    // Call the quarantineDevice function directly
-    await quarantineDevice(mockMac, mockAlertId);
-    res.json({ 
-      success: true, 
-      message: `Quarantine was requested for MAC ${mockMac}. Check the Node.js terminal logs for details.`
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // Client-side dashboard routes resolve to the Vite entry point; API routes above remain unchanged.
 app.use((req, res, next) => {
   if (req.method !== 'GET' || req.path === '/api' || req.path.startsWith('/api/')) return next();
@@ -193,6 +194,7 @@ app.use((req, res, next) => {
     if (err) next();
   });
 });
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Web server is running at http://0.0.0.0:${PORT}`);
