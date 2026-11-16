@@ -136,6 +136,58 @@ async function quarantineDevice(macAddress, alertId) {
   }
 }
 
+app.post('/api/agents/clear-quarantine', async (req, res) => {
+  const macAddress = typeof req.body?.macAddress === 'string' ? req.body.macAddress.trim() : '';
+  const isValidMac = /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(macAddress)
+    || /^[0-9a-f]{12}$/i.test(macAddress);
+
+  if (!isValidMac) {
+    return res.status(400).json({ error: 'A valid device MAC address is required.' });
+  }
+
+  try {
+    const iseAgent = new https.Agent({ rejectUnauthorized: false });
+    await axios({
+      method: 'PUT',
+      url: `${process.env.ISE_BASE_URL}/ers/config/ancendpoint/clear`,
+      data: {
+        OperationAdditionalData: {
+          additionalData: [
+            {
+              name: 'macAddress',
+              value: macAddress
+            }
+          ]
+        }
+      },
+      auth: {
+        username: process.env.ISE_USER,
+        password: process.env.ISE_PASSWORD
+      },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      httpsAgent: iseAgent
+    });
+  } catch (err) {
+    console.error(`❌ Failed to clear quarantine for MAC [${macAddress}]:`, err.message);
+    return res.status(502).json({ error: 'Cisco ISE could not remove quarantine for this device.' });
+  }
+
+  try {
+    await pool.query(
+      'UPDATE alerts SET is_quarantined = FALSE WHERE LOWER(device_mac) = LOWER($1)',
+      [macAddress]
+    );
+  } catch (err) {
+    console.error(`Cisco ISE cleared quarantine for MAC [${macAddress}], but the local status update failed:`, err);
+    return res.status(500).json({ error: 'Cisco ISE cleared quarantine, but the local status could not be updated. Reload device data.' });
+  }
+
+  return res.json({ success: true, macAddress });
+});
+
 // Endpoint for the frontend to retrieve alerts
 app.get('/api/alerts', async (req, res) => {
   try {

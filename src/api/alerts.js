@@ -86,6 +86,19 @@ export async function fetchDashboardSummary() {
   return result;
 }
 
+export async function clearDeviceQuarantine(macAddress) {
+  const response = await fetch('/api/agents/clear-quarantine', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ macAddress }),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(result?.error || `Could not remove device quarantine (${response.status}).`);
+  }
+  return result;
+}
+
 export function downloadRows(filename, rows) {
   const columns = [
     ['id', 'ID'], ['severity_raw', 'Severity'], ['alert_type', 'Alert Type'],

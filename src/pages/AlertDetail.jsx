@@ -57,7 +57,7 @@ export default function AlertDetail() {
             <h1 className="mt-3 break-all font-mono text-[20px] sm:text-[24px]">{alert.file_name}</h1>
             <p className="mt-1.5 text-[12px] text-muted-foreground">{alert.description || 'No description provided by the agent'} · {formatDateTime(alert.timestamp)}</p>
           </div>
-          <p className="max-w-md rounded-lg border border-border/70 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">The legacy API is read-only. Status changes, notes, and quarantine commands are not supported in this interface.</p>
+          <p className="max-w-md rounded-lg border border-border/70 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">Quarantine can be removed from Devices & Agents. Status actions are not available from this alert detail view.</p>
         </div>
       </section>
 
