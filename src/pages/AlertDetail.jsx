@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, Copy, Check, Loader2 } from 'lucide-react';
 import { fetchAlerts } from '@/api/alerts';
+import { useLiveAlerts } from '@/lib/live-updates';
 import SeverityBadge from '@/components/SeverityBadge';
 import StatusBadge from '@/components/StatusBadge';
 import { formatDateTime } from '@/lib/format';
@@ -12,13 +13,14 @@ export default function AlertDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const { version } = useLiveAlerts();
 
   useEffect(() => {
     fetchAlerts()
       .then((rows) => setAlert(rows.find((row) => String(row.id) === String(id)) ?? null))
       .catch((loadError) => setError(loadError.message || 'Could not load data.'))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, version]);
 
   const copyHash = async () => {
     if (!alert?.file_hash || !navigator.clipboard) return;

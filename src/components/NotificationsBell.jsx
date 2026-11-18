@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCheck } from 'lucide-react';
 import { fetchAlerts } from '@/api/alerts';
 import { formatRelative } from '@/lib/format';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 const READ_KEY = 'malware-guard-notifications-read-v1';
 
@@ -21,12 +22,13 @@ export default function NotificationsBell() {
   const [readIds, setReadIds] = useState(getReadIds);
   const [error, setError] = useState('');
   const navigate = useNavigate();
+  const { version } = useLiveAlerts();
 
   useEffect(() => {
     fetchAlerts()
       .then((alerts) => setItems(alerts.slice(0, 12)))
       .catch(() => setError('Could not load notifications from the alerts API.'));
-  }, []);
+  }, [version]);
 
   const markRead = (ids) => {
     const next = new Set([...readIds, ...ids.map(String)]);

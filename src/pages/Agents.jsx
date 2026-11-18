@@ -4,6 +4,7 @@ import { MonitorSmartphone, Search, Loader2, ArrowUpRight, ChevronDown } from 'l
 import { createPortal } from 'react-dom';
 import { clearDeviceQuarantine, fetchAlerts } from '@/api/alerts';
 import { formatDateTime, formatNumber } from '@/lib/format';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 function collectAgents(alerts) {
   const grouped = new Map();
@@ -41,9 +42,10 @@ export default function Agents() {
   const [clearError, setClearError] = useState('');
   const [clearing, setClearing] = useState(false);
   const confirmationDialogRef = useRef(null);
+  const { version } = useLiveAlerts();
   useEffect(() => {
     fetchAlerts().then(setAlerts).catch((loadError) => setError(loadError.message || 'Could not load data.')).finally(() => setLoading(false));
-  }, []);
+  }, [version]);
   useEffect(() => {
     const dialog = confirmationDialogRef.current;
     if (!dialog) return;

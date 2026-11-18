@@ -12,6 +12,7 @@ import TrendChart from '@/components/TrendChart';
 import AlertTable from '@/components/AlertTable';
 import { formatNumber, formatRelative, SEVERITIES } from '@/lib/format';
 import { buildTrendSeries } from '@/lib/trend';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 export default function Dashboard() {
   const [alerts, setAlerts] = useState([]);
@@ -21,6 +22,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [nonce, setNonce] = useState(0);
+  const { version } = useLiveAlerts();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -43,7 +45,7 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load, nonce]);
+  useEffect(() => { load(); }, [load, nonce, version]);
 
   const severityRows = useMemo(() => SEVERITIES.map((item) => ({
     severity: item.value,

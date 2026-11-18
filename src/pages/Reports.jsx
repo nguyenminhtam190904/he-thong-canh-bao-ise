@@ -6,6 +6,7 @@ import TrendChart from '@/components/TrendChart';
 import SeverityBars from '@/components/SeverityBars';
 import { SEVERITIES, formatNumber } from '@/lib/format';
 import { buildTrendSeries, countBy } from '@/lib/trend';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 const COLORS = ['#F2555A', '#F08A3C', '#E3B341', '#5B9DFF', '#4FB39B', '#A78BFA'];
 
@@ -14,9 +15,10 @@ export default function Reports() {
   const [range, setRange] = useState('30d');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const { version } = useLiveAlerts();
   useEffect(() => {
     fetchAlerts().then(setAlerts).catch((loadError) => setError(loadError.message || 'Could not load data.')).finally(() => setLoading(false));
-  }, []);
+  }, [version]);
 
   const severityRows = useMemo(() => SEVERITIES.map((severity) => ({
     value: severity.value, label: severity.label, color: severity.color,

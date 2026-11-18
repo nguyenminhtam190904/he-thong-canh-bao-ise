@@ -3,6 +3,7 @@ const cors = require('cors');
 const axios = require('axios');
 const https = require('https');
 const pool = require('./db');
+const { router: authRouter, requireAuth, initAuth } = require('./auth');
 require('dotenv').config();
 
 const app = express();
@@ -10,6 +11,37 @@ app.use(cors());
 const path = require('path');
 app.use(express.static(path.join(__dirname, 'dist')));
 app.use(express.json());
+
+// Đăng nhập / đăng xuất (tài khoản lưu ở database riêng, xem auth-db.js)
+app.use('/api/auth', authRouter);
+
+// ---------- Realtime: đẩy sự kiện tới trình duyệt qua Server-Sent Events ----------
+const liveClients = new Set();
+
+function broadcastAlertChange(type, data = {}) {
+  const message = `event: alerts\ndata: ${JSON.stringify({ type, ...data, at: new Date().toISOString() })}\n\n`;
+  for (const client of liveClients) client.write(message);
+}
+
+app.get('/api/alerts/stream', requireAuth, (req, res) => {
+  res.set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  res.write('retry: 3000\n\n');
+  res.write(`event: ready\ndata: {}\n\n`);
+  liveClients.add(res);
+
+  // Giữ kết nối sống qua proxy/firewall
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    liveClients.delete(res);
+  });
+});
 
 // Middleware for validating the API key from the agent
 function authenticateAgent(req, res, next) {
@@ -62,6 +94,7 @@ app.post('/api/wazuh-alert', authenticateAgent, async (req, res) => {
       [severity, alertType, description, deviceIp, deviceMac, JSON.stringify(data)]
     );
     const alertId = result.rows[0].id;
+    broadcastAlertChange('created', { id: alertId, severity });
 
     // 4. Kích hoạt cách ly qua Cisco ISE nếu severity từ MEDIUM trở lên (MEDIUM, HIGH, CRITICAL) và có MAC
     const quarantineSeverities = ['MEDIUM', 'HIGH', 'CRITICAL'];
@@ -124,6 +157,7 @@ async function quarantineDevice(macAddress, alertId) {
 
     // Update the quarantine status in the database
     await pool.query('UPDATE alerts SET is_quarantined = TRUE WHERE id = $1', [alertId]);
+    broadcastAlertChange('quarantined', { id: alertId });
     console.log(`✅ Successfully sent the quarantine command for MAC [${macAddress}] (Policy: ${policyName}) to Cisco ISE.`);
   } catch (err) {
     console.error(`❌ Failed to call the ISE API to quarantine MAC [${macAddress}]:`);
@@ -136,7 +170,7 @@ async function quarantineDevice(macAddress, alertId) {
   }
 }
 
-app.post('/api/agents/clear-quarantine', async (req, res) => {
+app.post('/api/agents/clear-quarantine', requireAuth, async (req, res) => {
   const macAddress = typeof req.body?.macAddress === 'string' ? req.body.macAddress.trim() : '';
   const isValidMac = /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(macAddress)
     || /^[0-9a-f]{12}$/i.test(macAddress);
@@ -185,11 +219,12 @@ app.post('/api/agents/clear-quarantine', async (req, res) => {
     return res.status(500).json({ error: 'Cisco ISE cleared quarantine, but the local status could not be updated. Reload device data.' });
   }
 
+  broadcastAlertChange('quarantine-cleared', { macAddress });
   return res.json({ success: true, macAddress });
 });
 
 // Endpoint for the frontend to retrieve alerts
-app.get('/api/alerts', async (req, res) => {
+app.get('/api/alerts', requireAuth, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM alerts ORDER BY timestamp DESC LIMIT 50'
@@ -201,7 +236,7 @@ app.get('/api/alerts', async (req, res) => {
 });
 
 // Retrieve aggregate statistics and the seven-day trend for the dashboard
-app.get('/api/dashboard-summary', async (req, res) => {
+app.get('/api/dashboard-summary', requireAuth, async (req, res) => {
   try {
     const [summary, trend] = await Promise.all([
       pool.query(`
@@ -248,6 +283,22 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Web server is running at http://0.0.0.0:${PORT}`);
-});
+initAuth()
+  .then(() => {
+    app.listen(PORT, '0.0.0.0', (err) => {
+      if (err) {
+        if (err.code === 'EADDRINUSE') {
+          console.error(`❌ Cổng ${PORT} đang bị một chương trình khác chiếm (có thể là server cũ chưa tắt).`);
+          console.error(`   Tắt nó bằng Ctrl+C trong terminal đang chạy, hoặc: taskkill /F /IM node.exe`);
+        } else {
+          console.error('❌ Không khởi động được server:', err.message);
+        }
+        process.exit(1);
+      }
+      console.log(`🚀 Web server is running at http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error('❌ Không khởi tạo được database tài khoản:', err.message);
+    process.exit(1);
+  });

@@ -5,6 +5,7 @@ import { fetchAlerts, downloadRows } from '@/api/alerts';
 import AlertTable from '@/components/AlertTable';
 import SelectField from '@/components/SelectField';
 import { SEVERITIES, STATUSES, formatNumber } from '@/lib/format';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 const PAGE_SIZE = 10;
 
@@ -19,13 +20,14 @@ export default function Alerts() {
   const [page, setPage] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const { version } = useLiveAlerts();
 
   useEffect(() => {
     fetchAlerts()
       .then(setAlerts)
       .catch((loadError) => setError(loadError.message || 'Could not load alerts.'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [version]);
 
   useEffect(() => { setPage(0); }, [q, severity, status, from, to]);
 

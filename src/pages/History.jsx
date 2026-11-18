@@ -4,6 +4,7 @@ import { History as HistoryIcon, Loader2, Search } from 'lucide-react';
 import { fetchAlerts } from '@/api/alerts';
 import SelectField from '@/components/SelectField';
 import { formatDateTime } from '@/lib/format';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 const ACTION_OPTIONS = [
   { value: 'all', label: 'All alerts' },
@@ -19,10 +20,11 @@ export default function History() {
   const [loadingError, setLoadingError] = useState('');
   const [nonce, setNonce] = useState(0);
 
+  const { version } = useLiveAlerts();
   useEffect(() => {
     setLoading(true);
     fetchAlerts().then(setAlerts).catch((error) => setLoadingError(error.message || 'Could not load data.')).finally(() => setLoading(false));
-  }, [nonce]);
+  }, [nonce, version]);
 
   const entries = useMemo(() => alerts.filter((alert) => {
     const term = q.trim().toLocaleLowerCase();

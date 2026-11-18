@@ -1,4 +1,6 @@
-const SEVERITY_VALUES = new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']);
+import { notifyUnauthorized } from '@/api/auth';
+
+const SEVERITY_VALUES =new Set(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO']);
 
 function objectValue(value) {
   if (value && typeof value === 'object') return value;
@@ -70,6 +72,7 @@ export function normalizeAlert(row = {}) {
 
 export async function fetchAlerts() {
   const response = await fetch('/api/alerts', { headers: { Accept: 'application/json' } });
+  notifyUnauthorized(response);
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(result?.error || `Could not load alerts (${response.status}).`);
@@ -79,6 +82,7 @@ export async function fetchAlerts() {
 
 export async function fetchDashboardSummary() {
   const response = await fetch('/api/dashboard-summary', { headers: { Accept: 'application/json' } });
+  notifyUnauthorized(response);
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(result?.error || `Could not load statistics (${response.status}).`);
@@ -92,6 +96,7 @@ export async function clearDeviceQuarantine(macAddress) {
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ macAddress }),
   });
+  notifyUnauthorized(response);
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(result?.error || `Could not remove device quarantine (${response.status}).`);

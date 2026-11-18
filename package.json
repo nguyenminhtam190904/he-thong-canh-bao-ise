@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "create-user": "node scripts/create-user.js",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",

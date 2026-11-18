@@ -1,6 +1,8 @@
 import { useLocation } from 'react-router-dom';
-import { Menu } from 'lucide-react';
+import { LogOut, Menu, UserRound } from 'lucide-react';
 import NotificationsBell from '@/components/NotificationsBell';
+import { useAuth } from '@/lib/auth-context';
+import { useLiveAlerts } from '@/lib/live-updates';
 
 const TITLES = {
     '/': { title: 'Overview', crumb: 'Dashboard' },
@@ -13,6 +15,8 @@ const TITLES = {
 
 export default function Topbar({ onMenu }) {
     const { pathname } = useLocation();
+    const { user, logout } = useAuth();
+    const live = useLiveAlerts();
     const current = TITLES[pathname] ?? {
         title: pathname.startsWith('/alerts/') ? 'Threat Details' : 'NGuard',
         crumb: 'Threat details',
@@ -40,18 +44,35 @@ export default function Topbar({ onMenu }) {
                 </div>
 
                 <div className="ml-auto flex items-center gap-2">
-                    <span className="hidden items-center gap-2 rounded-full border border-border/70 px-3 py-1.5 text-[11px] text-muted-foreground sm:flex">
+                    <span
+                        className="hidden items-center gap-2 rounded-full border border-border/70 px-3 py-1.5 text-[11px] text-muted-foreground sm:flex"
+                        title={live.status === 'live' ? 'New alerts appear automatically' : 'Live connection lost; retrying and refreshing every 30 seconds'}
+                    >
                         <span className="relative flex h-1.5 w-1.5">
-                            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+                            {live.status === 'live' && (
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                            )}
+                            <span className={`relative inline-flex h-1.5 w-1.5 rounded-full ${live.status === 'live' ? 'bg-primary' : 'bg-[#E3B341]'}`} />
                         </span>
-                        API data
+                        {live.status === 'live' ? 'Realtime' : 'Reconnecting…'}
                     </span>
 
                     <NotificationsBell />
 
-                    <span className="hidden rounded-lg border border-border/70 px-3 py-1.5 text-[11px] text-muted-foreground sm:block">
-                        Read-only
+                    <span className="hidden items-center gap-2 rounded-lg border border-border/70 px-3 py-1.5 text-[11px] text-muted-foreground sm:flex">
+                        <UserRound className="h-3.5 w-3.5" />
+                        {user?.fullName || user?.username}
                     </span>
+
+                    <button
+                        type="button"
+                        onClick={logout}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 px-3 py-1.5 text-[11px] text-muted-foreground transition-colors hover:border-[#F2555A]/40 hover:text-[#F2555A]"
+                        aria-label="Sign out"
+                    >
+                        <LogOut className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Sign out</span>
+                    </button>
                 </div>
             </div>
         </header>
