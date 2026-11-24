@@ -12,6 +12,7 @@ export const SEVERITIES = [
 export const STATUSES = [
     { value: 'detected', label: 'Detected', color: '#E3B341' },
     { value: 'quarantined', label: 'Quarantined', color: '#5B9DFF' },
+    { value: 'quarantine_failed', label: 'Quarantine failed', color: '#F2555A' },
 ];
 
 export const severityMeta = (value) =>

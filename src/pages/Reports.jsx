@@ -44,7 +44,7 @@ export default function Reports() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="API Alerts" value={formatNumber(alerts.length)} hint="Up to 50 most recent records" accent="#4FB39B" />
         <StatCard label="Observed Devices" value={formatNumber(uniqueDevices)} hint="Inferred from alert payloads" accent="#F08A3C" />
-        <StatCard label="Quarantined" value={formatNumber(quarantined)} hint="Current status from the API" accent="#5B9DFF" />
+        <StatCard label="Quarantined Alerts" value={formatNumber(quarantined)} hint="Alerts whose device is currently quarantined" accent="#5B9DFF" />
         <StatCard label="Critical" value={formatNumber(alerts.filter((alert) => alert.severity === 'critical').length)} hint="Among records returned by the API" accent="#F2555A" />
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.9fr_1.1fr]">

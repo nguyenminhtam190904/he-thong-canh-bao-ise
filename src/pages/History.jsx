@@ -10,6 +10,7 @@ const ACTION_OPTIONS = [
   { value: 'all', label: 'All alerts' },
   { value: 'detected', label: 'Not quarantined (current)' },
   { value: 'quarantined', label: 'Quarantined (current)' },
+  { value: 'quarantine_failed', label: 'Quarantine failed (current)' },
 ];
 
 export default function History() {

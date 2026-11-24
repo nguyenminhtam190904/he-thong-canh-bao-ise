@@ -43,6 +43,7 @@ export function normalizeAlert(row = {}) {
   const rawSeverity = String(row.severity ?? 'INFO').toUpperCase();
   const severity = SEVERITY_VALUES.has(rawSeverity) ? rawSeverity.toLowerCase() : 'info';
   const quarantined = row.is_quarantined === true || row.is_quarantined === 'true';
+  const quarantineError = !quarantined && row.quarantine_error ? String(row.quarantine_error) : null;
   const agentId = firstValue(agent.id, payload.agent_id, data.agent_id);
   const agentName = firstValue(agent.name, agent.hostname, payload.agent_name, data.hostname);
   const agentOs = firstValue(agent.os?.name, agent.os?.platform, agent.os, payload.os);
@@ -55,8 +56,9 @@ export function normalizeAlert(row = {}) {
     description: row.description ?? '',
     timestamp: row.timestamp ?? null,
     detection_time: row.timestamp ?? null,
-    status: quarantined ? 'quarantined' : 'detected',
+    status: quarantined ? 'quarantined' : quarantineError ? 'quarantine_failed' : 'detected',
     is_quarantined: quarantined,
+    quarantine_error: quarantineError,
     device_ip: row.device_ip ?? agent.ip ?? null,
     device_mac: row.device_mac ?? eventdata.mac ?? data.srcmac ?? null,
     file_path: filePath,
@@ -86,6 +88,31 @@ export async function fetchDashboardSummary() {
   const result = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(result?.error || `Could not load statistics (${response.status}).`);
+  }
+  return result;
+}
+
+// Danh sách thiết bị do server gom trên toàn bộ cảnh báo (không giới hạn 50 bản ghi)
+export async function fetchAgents() {
+  const response = await fetch('/api/agents', { headers: { Accept: 'application/json' } });
+  notifyUnauthorized(response);
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(result?.error || `Could not load devices (${response.status}).`);
+  }
+  return Array.isArray(result?.data) ? result.data : [];
+}
+
+export async function quarantineDevice(macAddress) {
+  const response = await fetch('/api/agents/quarantine', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ macAddress }),
+  });
+  notifyUnauthorized(response);
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(result?.error || `Could not quarantine the device (${response.status}).`);
   }
   return result;
 }

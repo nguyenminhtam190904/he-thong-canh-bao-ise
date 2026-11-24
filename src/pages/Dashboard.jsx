@@ -52,8 +52,11 @@ export default function Dashboard() {
     count: alerts.filter((alert) => alert.severity === item.value).length,
   })), [alerts]);
   const recent = alerts.filter((alert) => !severity || alert.severity === severity).slice(0, 8);
-  const uniqueDevices = new Set(alerts.map((alert) => alert.agent_id || alert.device_ip || alert.device_mac).filter(Boolean)).size;
-  const quarantined = Number(summary?.quarantined ?? alerts.filter((alert) => alert.is_quarantined).length);
+  // Ưu tiên số liệu server tính trên toàn bộ database; chỉ dùng 50 alert gần nhất khi không tải được thống kê
+  const fallbackDevices = (list) => new Set(list.map((alert) => alert.agent_id || alert.agent_name || alert.device_ip || alert.device_mac).filter(Boolean)).size;
+  const uniqueDevices = Number(summary?.devices ?? fallbackDevices(alerts));
+  const quarantinedDevices = Number(summary?.quarantined_devices ?? fallbackDevices(alerts.filter((alert) => alert.is_quarantined)));
+  const quarantinedAlerts = Number(summary?.quarantined_alerts ?? alerts.filter((alert) => alert.is_quarantined).length);
   const total = Number(summary?.total ?? alerts.length);
   const warningCount = Number(summary ? Number(summary.high || 0) + Number(summary.medium || 0) : alerts.filter((alert) => ['high', 'medium'].includes(alert.severity)).length);
   const series = useMemo(() => buildTrendSeries(alerts, range), [alerts, range]);
@@ -80,9 +83,9 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard label="Total Alerts" value={formatNumber(total)} hint={summary ? 'Total in the database' : 'API records currently displayed'} icon={ShieldAlert} accent="#4FB39B" />
-        <StatCard label="Quarantined" value={formatNumber(quarantined)} hint="Reported as quarantined by the API" icon={ShieldCheck} accent="#5B9DFF" />
+        <StatCard label="Quarantined Devices" value={formatNumber(quarantinedDevices)} hint={`Currently isolated by Cisco ISE · ${formatNumber(quarantinedAlerts)} related alerts`} icon={ShieldCheck} accent="#5B9DFF" />
         <StatCard label="Warnings" value={formatNumber(warningCount)} hint="High & medium severity" icon={TriangleAlert} accent="#E3B341" />
-        <StatCard label="Observed Agents" value={formatNumber(uniqueDevices)} hint="Devices in the 50 most recent alerts" icon={MonitorSmartphone} accent="#F08A3C" />
+        <StatCard label="Observed Agents" value={formatNumber(uniqueDevices)} hint={summary ? 'Devices seen in all alerts' : 'Devices in the 50 most recent alerts'} icon={MonitorSmartphone} accent="#F08A3C" />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.05fr_1.95fr]">
@@ -113,7 +116,7 @@ export default function Dashboard() {
           <div className="flex items-center justify-between"><h2 className="font-display text-[14px]">Observed Devices</h2><MonitorSmartphone className="h-4 w-4 text-muted-foreground" /></div>
           <p className="mt-1 text-[11px] text-muted-foreground">Online/offline status is not inferred.</p>
           <div className="mt-5 rounded-xl border border-border/60 bg-white/[0.02] p-3">
-            <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Devices in Recent Data</p>
+            <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Devices Seen</p>
             <p className="mt-2 font-display text-xl text-primary">{formatNumber(uniqueDevices)}</p>
           </div>
           <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground">The API currently provides alerts only; it does not provide an agent list or connection status.</p>

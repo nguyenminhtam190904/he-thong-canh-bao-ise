@@ -1,39 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { MonitorSmartphone, Search, Loader2, ArrowUpRight, ChevronDown } from 'lucide-react';
+import { MonitorSmartphone, Search, Loader2, ArrowUpRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { clearDeviceQuarantine, fetchAlerts } from '@/api/alerts';
+import { clearDeviceQuarantine, fetchAgents, quarantineDevice } from '@/api/alerts';
 import { formatDateTime, formatNumber } from '@/lib/format';
 import { useLiveAlerts } from '@/lib/live-updates';
 
-function collectAgents(alerts) {
-  const grouped = new Map();
-  alerts.forEach((alert) => {
-    const key = alert.agent_id || alert.agent_name || alert.device_ip || alert.device_mac;
-    if (!key) return;
-    const current = grouped.get(String(key)) || {
-      id: String(key), agent_id: alert.agent_id, hostname: alert.agent_name,
-      ip: alert.device_ip, mac: alert.device_mac, os: alert.agent_os,
-      count: 0, lastAlert: alert.timestamp, statusTimestamp: 0,
-    };
-    current.count += 1;
-    const alertTimestamp = alert.timestamp ? new Date(alert.timestamp).getTime() : 0;
-    if (alert.timestamp && (!current.lastAlert || alertTimestamp > new Date(current.lastAlert).getTime())) current.lastAlert = alert.timestamp;
-    if (alertTimestamp >= current.statusTimestamp) {
-      current.is_quarantined = alert.is_quarantined;
-      current.statusTimestamp = alertTimestamp;
-    }
-    current.hostname ||= alert.agent_name;
-    current.ip ||= alert.device_ip;
-    current.mac ||= alert.device_mac;
-    current.os ||= alert.agent_os;
-    grouped.set(String(key), current);
-  });
-  return [...grouped.values()].sort((a, b) => new Date(b.lastAlert || 0) - new Date(a.lastAlert || 0));
-}
-
 export default function Agents() {
-  const [alerts, setAlerts] = useState([]);
+  const [agents, setAgents] = useState([]);
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -41,11 +15,22 @@ export default function Agents() {
   const [openMenu, setOpenMenu] = useState(null);
   const [clearError, setClearError] = useState('');
   const [clearing, setClearing] = useState(false);
+  const [retryingId, setRetryingId] = useState(null);
+  const [retryError, setRetryError] = useState('');
   const confirmationDialogRef = useRef(null);
   const { version } = useLiveAlerts();
-  useEffect(() => {
-    fetchAlerts().then(setAlerts).catch((loadError) => setError(loadError.message || 'Could not load data.')).finally(() => setLoading(false));
-  }, [version]);
+  // Danh sách thiết bị do server gom trên toàn bộ cảnh báo trong database
+  const loadAgents = useCallback(async () => {
+    try {
+      setAgents(await fetchAgents());
+      setError('');
+    } catch (loadError) {
+      setError(loadError.message || 'Could not load data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { loadAgents(); }, [loadAgents, version]);
   useEffect(() => {
     const dialog = confirmationDialogRef.current;
     if (!dialog) return;
@@ -70,9 +55,23 @@ export default function Agents() {
     };
   }, [openMenu]);
 
-  const agents = useMemo(() => collectAgents(alerts), [alerts]);
+  const totalAlerts = agents.reduce((sum, agent) => sum + (agent.alert_count || 0), 0);
   const filtered = agents.filter((agent) => [agent.agent_id, agent.hostname, agent.ip, agent.mac, agent.os]
     .some((value) => String(value ?? '').toLocaleLowerCase().includes(q.trim().toLocaleLowerCase())));
+
+  async function handleRetryQuarantine(agent) {
+    if (!agent?.mac) return;
+    setRetryError('');
+    setRetryingId(agent.id);
+    try {
+      await quarantineDevice(agent.mac);
+    } catch (retryRequestError) {
+      setRetryError(`${agent.hostname || agent.mac}: ${retryRequestError.message || 'Could not quarantine the device.'}`);
+    }
+    // Tải lại để lấy trạng thái chính xác từ server
+    await loadAgents();
+    setRetryingId(null);
+  }
 
   async function handleClearQuarantine() {
     if (!selectedAgent?.mac) return;
@@ -81,12 +80,13 @@ export default function Agents() {
     try {
       await clearDeviceQuarantine(selectedAgent.mac);
       const normalizedMac = selectedAgent.mac.toLowerCase();
-      setAlerts((current) => current.map((alert) => (
-        String(alert.device_mac ?? '').toLowerCase() === normalizedMac
-          ? { ...alert, is_quarantined: false, status: 'detected' }
-          : alert
+      setAgents((current) => current.map((agent) => (
+        String(agent.mac ?? '').toLowerCase() === normalizedMac
+          ? { ...agent, is_quarantined: false, quarantine_error: null, status: 'running' }
+          : agent
       )));
       setSelectedAgent(null);
+      loadAgents();
     } catch (clearRequestError) {
       setClearError(clearRequestError.message || 'Could not remove device quarantine.');
     } finally {
@@ -99,12 +99,13 @@ export default function Agents() {
       <div>
         <p className="text-[10px] uppercase tracking-[0.24em] text-muted-foreground/70">Device management</p>
         <h1 className="mt-2 font-display text-[24px] sm:text-[28px]">Devices & Agents</h1>
-        <p className="mt-1.5 text-[13px] text-muted-foreground">Devices are inferred from the 50 most recent alert payloads. Status shows quarantine state; online/offline connectivity is not provided by the API.</p>
+        <p className="mt-1.5 text-[13px] text-muted-foreground">Devices are built from every alert in the database. Alerts at or above the severity set in Settings automatically quarantine the device through Cisco ISE; online/offline connectivity is not provided by the API.</p>
       </div>
+      {retryError && <p role="alert" className="rounded-lg border border-[#F2555A]/30 bg-[#F2555A]/10 px-4 py-3 text-[12px] text-[#F2555A]">{retryError}</p>}
       {error && <p role="alert" className="rounded-lg border border-[#F2555A]/30 bg-[#F2555A]/10 px-4 py-3 text-[12px] text-[#F2555A]">{error}</p>}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="rounded-2xl border border-border/70 bg-card/60 p-5"><div className="flex items-center justify-between"><p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Observed Devices</p><MonitorSmartphone className="h-4 w-4 text-muted-foreground" /></div><p className="mt-4 font-display text-2xl">{formatNumber(agents.length)}</p></div>
-        <div className="rounded-2xl border border-border/70 bg-card/60 p-5"><p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alerts from Devices</p><p className="mt-4 font-display text-2xl text-primary">{formatNumber(alerts.length)}</p></div>
+        <div className="rounded-2xl border border-border/70 bg-card/60 p-5"><p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Alerts from Devices</p><p className="mt-4 font-display text-2xl text-primary">{formatNumber(totalAlerts)}</p></div>
       </div>
       <section className="rounded-2xl border border-border/70 bg-card/60 p-4">
         <div className="relative">
@@ -113,7 +114,7 @@ export default function Agents() {
         </div>
       </section>
       <section className="overflow-hidden rounded-2xl border border-border/70 bg-card/60">
-        {loading ? <div className="flex items-center justify-center gap-2 py-20 text-[12px] text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading from alerts…</div> : filtered.length === 0 ? <div className="px-6 py-16 text-center text-sm text-muted-foreground">{error || 'Current alert payloads contain no agent information matching your filter.'}</div> : (
+        {loading ? <div className="flex items-center justify-center gap-2 py-20 text-[12px] text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading devices…</div> : filtered.length === 0 ? <div className="px-6 py-16 text-center text-sm text-muted-foreground">{error || 'No devices match your filter.'}</div> : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[790px] border-collapse text-left">
               <thead><tr className="border-b border-border/70">{['Device', 'Agent ID', 'IP / MAC', 'Operating System', 'Status', 'Observed Alerts', 'Last Seen in Alert', ''].map((heading) => <th key={heading} className="px-4 py-3 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{heading}</th>)}</tr></thead>
@@ -123,7 +124,7 @@ export default function Agents() {
                 <td className="px-4 py-3"><p className="font-mono text-[12px]">{agent.ip || '—'}</p><p className="font-mono text-[10px] text-muted-foreground">{agent.mac || '—'}</p></td>
                 <td className="px-4 py-3 text-[11.5px] text-muted-foreground">{agent.os || '—'}</td>
                 <td className="px-4 py-3">
-                  {agent.is_quarantined ? (
+                  {agent.status !== 'running' ? (
                     <button
                       type="button"
                       data-quarantine-trigger
@@ -141,16 +142,26 @@ export default function Agents() {
                           left: Math.min(Math.max(bounds.left, 8), Math.max(8, window.innerWidth - 184)),
                         });
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[#5B9DFF]/30 bg-[#5B9DFF]/10 px-2.5 py-1 text-[10.5px] text-[#8DBBFF] hover:bg-[#5B9DFF]/15"
+                      disabled={retryingId === agent.id}
+                      title={agent.status === 'quarantine_failed' ? agent.quarantine_error : undefined}
+                      className={agent.status === 'quarantined'
+                        ? 'inline-flex items-center gap-1.5 rounded-full border border-[#5B9DFF]/30 bg-[#5B9DFF]/10 px-2.5 py-1 text-[10.5px] text-[#8DBBFF] hover:bg-[#5B9DFF]/15'
+                        : 'inline-flex items-center gap-1.5 rounded-full border border-[#F2555A]/35 bg-[#F2555A]/10 px-2.5 py-1 text-[10.5px] text-[#FF8A8E] hover:bg-[#F2555A]/15 disabled:opacity-70'}
                     >
-                      Quarantined <ChevronDown className="h-3 w-3" />
+                      {agent.status === 'quarantined' ? (
+                        <>Quarantined <ChevronDown className="h-3 w-3" /></>
+                      ) : retryingId === agent.id ? (
+                        <><Loader2 className="h-3 w-3 animate-spin" /> Quarantining…</>
+                      ) : (
+                        <><AlertTriangle className="h-3 w-3" /> Quarantine failed <ChevronDown className="h-3 w-3" /></>
+                      )}
                     </button>
                   ) : (
                     <span title="Not reported as quarantined; online/offline connectivity is not available." className="inline-flex rounded-full border border-[#35C98A]/25 bg-[#35C98A]/10 px-2.5 py-1 text-[10.5px] text-[#65D9A5]">Running</span>
                   )}
                 </td>
-                <td className="px-4 py-3 font-mono text-[12px]">{formatNumber(agent.count)}</td>
-                <td className="whitespace-nowrap px-4 py-3 font-mono text-[10.5px] text-muted-foreground">{formatDateTime(agent.lastAlert)}</td>
+                <td className="px-4 py-3 font-mono text-[12px]">{formatNumber(agent.alert_count)}</td>
+                <td className="whitespace-nowrap px-4 py-3 font-mono text-[10.5px] text-muted-foreground">{formatDateTime(agent.last_alert)}</td>
                 <td className="px-4 py-3 text-right"><Link to={`/alerts?q=${encodeURIComponent(agent.ip || agent.agent_id || '')}`} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-primary">Alerts <ArrowUpRight className="h-3 w-3" /></Link></td>
               </tr>)}</tbody>
             </table>
@@ -161,9 +172,27 @@ export default function Agents() {
         <div
           data-quarantine-menu
           role="menu"
-          className="fixed z-[110] min-w-[176px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+          className="fixed z-[110] min-w-[176px] max-w-[260px] rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
           style={{ top: openMenu.top, left: openMenu.left }}
         >
+          {openMenu.agent.status === 'quarantine_failed' ? (
+            <>
+              <p className="px-2 py-1.5 text-[11px] leading-snug text-[#FF8A8E]">{openMenu.agent.quarantine_error}</p>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!openMenu.agent.mac}
+                onClick={() => {
+                  const target = openMenu.agent;
+                  setOpenMenu(null);
+                  handleRetryQuarantine(target);
+                }}
+                className="flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+              >
+                Retry quarantine
+              </button>
+            </>
+          ) : (
           <button
             type="button"
             role="menuitem"
@@ -177,6 +206,7 @@ export default function Agents() {
           >
             Remove quarantine
           </button>
+          )}
         </div>,
         document.body
       )}
